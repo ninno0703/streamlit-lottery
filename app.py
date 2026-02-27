@@ -4,7 +4,6 @@ import random
 
 st.set_page_config(page_title="抽獎系統", page_icon="🎉", layout="wide")
 
-# 初始化 Session State
 if "participants" not in st.session_state:
     st.session_state.participants = []
 if "locked" not in st.session_state:
@@ -19,26 +18,7 @@ if "prize_list" not in st.session_state:
     ])
 
 # ==========================================
-# 側邊欄 (Sidebar) - 名單監控區
-# ==========================================
-with st.sidebar:
-    st.header("📝 目前抽獎名單")
-    st.write(f"總共：**{len(st.session_state.participants)}** 人")
-    
-    # 顯示目前名單的表格
-    if st.session_state.participants:
-        df_participants = pd.DataFrame({"參賽者": st.session_state.participants})
-        st.dataframe(df_participants, hide_index=True, use_container_width=True)
-    else:
-        st.info("目前名單是空的喔！")
-        
-    st.divider()
-    if st.button("🗑️ 清空所有名單", use_container_width=True):
-        st.session_state.participants = []
-        st.rerun()
-
-# ==========================================
-# 主畫面
+# 主畫面 (先處理所有的輸入與抽獎邏輯)
 # ==========================================
 st.title("🎉 抽獎系統")
 
@@ -79,7 +59,7 @@ with tab2:
             manual_list = [name.strip() for name in manual_input.split('\n') if name.strip()]
             st.session_state.participants.extend(manual_list)
             st.session_state.participants = list(set(st.session_state.participants))
-            st.success(f"✅ 成功加入 {len(manual_list)} 筆手動名單！")
+            st.success(f"✅ 成功加入 {len(manual_list)} 筆手動名單！請看左側欄確認。")
         else:
             st.warning("請先輸入內容喔！")
 
@@ -138,3 +118,22 @@ else:
         st.balloons()
         for i, winner in enumerate(st.session_state.current_winners):
             st.markdown(f"#### 🏆 得獎者 {i+1}: **{winner}**")
+
+# ==========================================
+# 側邊欄 (Sidebar) - 移到最後面，確保抓到最新資料
+# ==========================================
+with st.sidebar:
+    st.header("📝 目前抽獎名單")
+    st.write(f"總共：**{len(st.session_state.participants)}** 人")
+    
+    # 顯示目前名單的表格
+    if st.session_state.participants:
+        df_participants = pd.DataFrame({"參賽者": st.session_state.participants})
+        st.dataframe(df_participants, hide_index=True, use_container_width=True)
+    else:
+        st.info("目前名單是空的喔！")
+        
+    st.divider()
+    if st.button("🗑️ 清空所有名單", use_container_width=True):
+        st.session_state.participants = []
+        st.rerun()

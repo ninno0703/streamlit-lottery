@@ -8,17 +8,19 @@ if "participants" not in st.session_state:
     st.session_state.participants = []
 if "locked" not in st.session_state:
     st.session_state.locked = False
-if "current_winners" not in st.session_state:
-    st.session_state.current_winners = []
+if "latest_winners" not in st.session_state:
+    st.session_state.latest_winners = []
+if "winners_record" not in st.session_state:
+    st.session_state.winners_record = {} 
 if "prize_list" not in st.session_state:
     st.session_state.prize_list = pd.DataFrame([
-        {"獎項名稱": "特獎", "數量": 1, "狀態": "待抽"},
-        {"獎項名稱": "頭獎", "數量": 2, "狀態": "待抽"},
-        {"獎項名稱": "普獎", "數量": 5, "狀態": "待抽"}
+        {"獎項名稱": "特獎", "數量": 1},
+        {"獎項名稱": "頭獎", "數量": 2},
+        {"獎項名稱": "普獎", "數量": 5}
     ])
 
 # ==========================================
-# 主畫面 (先處理所有的輸入與抽獎邏輯)
+# 主畫面 
 # ==========================================
 st.title("🎉 抽獎系統")
 
@@ -30,10 +32,8 @@ with tab1:
     uploaded_file = st.file_uploader("請上傳 Excel 檔案", type=["xlsx"])
     if uploaded_file:
         df = pd.read_excel(uploaded_file)
-        
         st.write("📄 **資料預覽 (前 3 筆)：**")
         st.dataframe(df.head(3), use_container_width=True)
-        
         read_mode = st.radio("請問名單是直的還是橫的？", ["按欄讀取 (直向 ↓)", "按列讀取 (橫向 →)"], horizontal=True)
         
         if read_mode == "按欄讀取 (直向 ↓)":
@@ -43,7 +43,6 @@ with tab1:
                 st.session_state.participants.extend(excel_list)
                 st.session_state.participants = list(set(st.session_state.participants))
                 st.success("✅ 成功載入！請看左側欄確認名單。")
-                
         else:
             target = st.selectbox("請選擇名單所在的「列數 (Index)」", df.index)
             if st.button("📥 載入 Excel 名單", use_container_width=True):
@@ -70,63 +69,96 @@ st.write("你可以直接在下方的表格新增、修改獎項名稱與要抽�
 edited_prizes = st.data_editor(
     st.session_state.prize_list,
     num_rows="dynamic",
-    use_container_width=True,
-    disabled=["狀態"]
+    use_container_width=True
 )
 st.session_state.prize_list = edited_prizes
+
+current_prize_names = edited_prizes["獎項名稱"].dropna().tolist()
+for p in current_prize_names:
+    if p not in st.session_state.winners_record:
+        st.session_state.winners_record[p] = []
+
 st.divider()
 
 st.subheader("3. 進行抽獎")
 
-pending_prizes = edited_prizes[edited_prizes["狀態"] == "待抽"]
+available_prizes = []
+for index, row in edited_prizes.iterrows():
+    p_name = row["獎項名稱"]
+    p_count = row["數量"]
+    if pd.isna(p_name) or p_name == "": continue
+    
+    drawn_count = len(st.session_state.winners_record.get(p_name, []))
+    if drawn_count < p_count:
+        available_prizes.append(f"{p_name} (剩餘 {p_count - drawn_count} 名)")
 
-if pending_prizes.empty:
-    st.info("🎈 所有獎項都已經抽完囉！")
+if not available_prizes:
+    st.info("🎈 所有獎項都已經抽完囉！可以看下方總得獎名單。")
 else:
-    current_prize = pending_prizes.iloc[0]
-    prize_name = current_prize["獎項名稱"]
-    prize_count = current_prize["數量"]
-    prize_idx = pending_prizes.index[0]
+    col_prize, col_mode = st.columns(2)
+    with col_prize:
+        selected_prize_str = st.selectbox("請選擇要抽的獎項 (決定順序)：", available_prizes, disabled=st.session_state.locked)
+    with col_mode:
+        draw_mode = st.radio("請選擇抽獎模式：", ["一次抽出剩餘名額", "單抽 (一次抽出 1 名)"], horizontal=True, disabled=st.session_state.locked)
 
-    st.markdown(f"### 目前正在抽取的獎項：**{prize_name}** (共 {prize_count} 名)")
+    selected_prize_name = selected_prize_str.split(" (剩餘")[0]
+    target_count = int(edited_prizes[edited_prizes["獎項名稱"] == selected_prize_name]["數量"].iloc[0])
+    current_drawn = len(st.session_state.winners_record[selected_prize_name])
+    remain_count = target_count - current_drawn
+
+    num_to_draw = remain_count if draw_mode == "一次抽出剩餘名額" else 1
+
+    st.markdown(f"### 即將抽出：**{selected_prize_name}** x `{num_to_draw}` 名")
 
     col1, col2 = st.columns(2)
 
     with col1:
         if st.button("🎯 抽出得獎者", disabled=st.session_state.locked, use_container_width=True):
-            if len(st.session_state.participants) < prize_count:
-                st.error("剩餘人數不足以抽出此獎項！請確認名單。")
+            if len(st.session_state.participants) < num_to_draw:
+                st.error("剩餘人數不足以抽出此數量！請確認名單。")
             else:
-                winners = random.sample(st.session_state.participants, prize_count)
-                st.session_state.current_winners = winners
+                winners = random.sample(st.session_state.participants, num_to_draw)
+                st.session_state.latest_winners = winners
+                st.session_state.winners_record[selected_prize_name].extend(winners) # 記錄進該獎項的名冊
 
                 for w in winners:
                     st.session_state.participants.remove(w)
 
-                st.session_state.prize_list.at[prize_idx, "狀態"] = "已抽出"
                 st.session_state.locked = True
                 st.rerun()
 
     with col2:
-        if st.button("🔓 解鎖並進行下一組", disabled=not st.session_state.locked, use_container_width=True):
+        if st.button("🔓 解鎖並繼續抽獎", disabled=not st.session_state.locked, use_container_width=True):
             st.session_state.locked = False
-            st.session_state.current_winners = []
+            st.session_state.latest_winners = []
             st.rerun()
 
     if st.session_state.locked:
-        st.success("🎉 抽獎結果出爐！畫面已鎖定，請點擊右方按鈕進行下一組。")
+        st.success("🎉 抽獎結果出爐！畫面已鎖定，請點擊右方按鈕繼續。")
         st.balloons()
-        for i, winner in enumerate(st.session_state.current_winners):
-            st.markdown(f"#### 🏆 得獎者 {i+1}: **{winner}**")
+        for i, winner in enumerate(st.session_state.latest_winners):
+            st.markdown(f"#### 🏆 {selected_prize_name} 得主: **{winner}**")
+
+st.divider()
+
+st.subheader("4. 🏆 目前得獎總名單")
+has_any_winner = False
+for p_name, winners in st.session_state.winners_record.items():
+    if winners:
+        has_any_winner = True
+        st.markdown(f"**{p_name}** (共 {len(winners)} 名): " + "、".join(winners))
+
+if not has_any_winner:
+    st.write("目前還沒有人得獎喔！")
+
 
 # ==========================================
-# 側邊欄 (Sidebar) - 移到最後面，確保抓到最新資料
+# 側邊欄 (Sidebar) 
 # ==========================================
 with st.sidebar:
     st.header("📝 目前抽獎名單")
-    st.write(f"總共：**{len(st.session_state.participants)}** 人")
+    st.write(f"總共剩餘：**{len(st.session_state.participants)}** 人")
     
-    # 顯示目前名單的表格
     if st.session_state.participants:
         df_participants = pd.DataFrame({"參賽者": st.session_state.participants})
         st.dataframe(df_participants, hide_index=True, use_container_width=True)
@@ -134,6 +166,8 @@ with st.sidebar:
         st.info("目前名單是空的喔！")
         
     st.divider()
-    if st.button("🗑️ 清空所有名單", use_container_width=True):
+    if st.button("🗑️ 清空所有名單與紀錄", use_container_width=True):
         st.session_state.participants = []
+        st.session_state.winners_record = {} 
+        st.session_state.latest_winners = []
         st.rerun()

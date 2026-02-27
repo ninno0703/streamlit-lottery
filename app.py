@@ -4,7 +4,7 @@ import random
 import io
 
 # ==========================================
-# 1. 狀態初始化模組
+# 1. State Initialization Module
 # ==========================================
 def init_session_state():
     if "participants" not in st.session_state:
@@ -15,6 +15,9 @@ def init_session_state():
         st.session_state.latest_winners = []
     if "winners_record" not in st.session_state:
         st.session_state.winners_record = {} 
+    if "confirm_reset" not in st.session_state:
+        # Added a state to track the confirmation of resetting the pool
+        st.session_state.confirm_reset = False
     if "prize_list" not in st.session_state:
         st.session_state.prize_list = pd.DataFrame([
             {"獎項名稱": "特獎", "數量": 1},
@@ -23,7 +26,7 @@ def init_session_state():
         ])
 
 # ==========================================
-# 2. 匯入名單區塊模組
+# 2. Import Participants Module
 # ==========================================
 def render_import_section():
     st.subheader("1. 匯入抽獎名單")
@@ -32,30 +35,36 @@ def render_import_section():
     with tab1:
         uploaded_file = st.file_uploader("請上傳 Excel 檔案", type=["xlsx"])
         if uploaded_file:
-            df = pd.read_excel(uploaded_file)
-            st.write("📄 **資料預覽 (前 3 筆)：**")
-            st.dataframe(df.head(3), use_container_width=True)
-            read_mode = st.radio("請問名單是直的還是橫的？", ["按欄讀取 (直向 ↓)", "按列讀取 (橫向 →)"], horizontal=True)
-            
-            if read_mode == "按欄讀取 (直向 ↓)":
-                target = st.selectbox("請選擇名單所在的「欄位名稱」", df.columns)
-                if st.button("📥 載入 Excel 名單", use_container_width=True):
-                    excel_list = df[target].dropna().astype(str).tolist()
-                    st.session_state.participants.extend(excel_list)
-                    st.session_state.participants = list(set(st.session_state.participants))
-                    st.success("✅ 成功載入！請看左側欄確認名單。")
-            else:
-                target = st.selectbox("請選擇名單所在的「列數 (Index)」", df.index)
-                if st.button("📥 載入 Excel 名單", use_container_width=True):
-                    excel_list = df.iloc[target, :].dropna().astype(str).tolist()
-                    st.session_state.participants.extend(excel_list)
-                    st.session_state.participants = list(set(st.session_state.participants))
-                    st.success("✅ 成功載入！請看左側欄確認名單。")
+            try:
+                # Use try-except to prevent crashes from corrupted or invalid excel files
+                df = pd.read_excel(uploaded_file)
+                st.write("📄 **資料預覽 (前 3 筆)：**")
+                st.dataframe(df.head(3), use_container_width=True)
+                read_mode = st.radio("請問名單是直的還是橫的？", ["按欄讀取 (直向 ↓)", "按列讀取 (橫向 →)"], horizontal=True)
+                
+                if read_mode == "按欄讀取 (直向 ↓)":
+                    target = st.selectbox("請選擇名單所在的「欄位名稱」", df.columns)
+                    if st.button("📥 載入 Excel 名單", use_container_width=True):
+                        # Drop NA and convert to string to avoid data type issues
+                        excel_list = df[target].dropna().astype(str).tolist()
+                        st.session_state.participants.extend(excel_list)
+                        st.session_state.participants = list(set(st.session_state.participants))
+                        st.success("✅ 成功載入！請看左側欄確認名單。")
+                else:
+                    target = st.selectbox("請選擇名單所在的「列數 (Index)」", df.index)
+                    if st.button("📥 載入 Excel 名單", use_container_width=True):
+                        excel_list = df.iloc[target, :].dropna().astype(str).tolist()
+                        st.session_state.participants.extend(excel_list)
+                        st.session_state.participants = list(set(st.session_state.participants))
+                        st.success("✅ 成功載入！請看左側欄確認名單。")
+            except Exception as e:
+                st.error("❌ 讀取 Excel 失敗，請確認檔案格式是否正確。")
 
     with tab2:
         manual_input = st.text_area("請手動輸入名單 (每行一個名字)：", height=150, placeholder="例如：\n王小明\n陳大麻\n李阿花")
         if st.button("➕ 加入手動名單", use_container_width=True):
             if manual_input.strip():
+                # Split by newline and remove empty lines
                 manual_list = [name.strip() for name in manual_input.split('\n') if name.strip()]
                 st.session_state.participants.extend(manual_list)
                 st.session_state.participants = list(set(st.session_state.participants))
@@ -65,7 +74,7 @@ def render_import_section():
     st.divider()
 
 # ==========================================
-# 3. 獎項設定區塊模組
+# 3. Prize Settings Module
 # ==========================================
 def render_prize_section():
     st.subheader("2. 獎項清單 (可編輯)")
@@ -77,14 +86,16 @@ def render_prize_section():
     )
     st.session_state.prize_list = edited_prizes
 
+    # Sync prize names to the winners record dictionary
     current_prize_names = edited_prizes["獎項名稱"].dropna().tolist()
     for p in current_prize_names:
-        if p not in st.session_state.winners_record:
+        # Ignore empty strings or whitespace-only prize names
+        if str(p).strip() != "" and p not in st.session_state.winners_record:
             st.session_state.winners_record[p] = []
     st.divider()
 
 # ==========================================
-# 4. 抽獎核心區塊模組
+# 4. Core Draw Module
 # ==========================================
 def render_draw_section():
     st.subheader("3. 進行抽獎")
@@ -93,8 +104,17 @@ def render_draw_section():
     
     for index, row in edited_prizes.iterrows():
         p_name = row["獎項名稱"]
-        p_count = row["數量"]
-        if pd.isna(p_name) or p_name == "": continue
+        
+        # Robust error handling for invalid user inputs in the data editor
+        try:
+            p_count = int(float(row["數量"]))
+        except (ValueError, TypeError):
+            # Fallback to 0 if the user inputs invalid text (e.g., "abc")
+            p_count = 0 
+
+        # Skip invalid rows: empty names or quantity <= 0
+        if pd.isna(p_name) or str(p_name).strip() == "" or p_count <= 0: 
+            continue
         
         drawn_count = len(st.session_state.winners_record.get(p_name, []))
         if drawn_count < p_count:
@@ -109,10 +129,13 @@ def render_draw_section():
         with col_mode:
             draw_mode = st.radio("請選擇抽獎模式：", ["一次抽出剩餘名額", "單抽 (一次抽出 1 名)"], horizontal=True, disabled=st.session_state.locked)
 
+        # Extract actual prize name without the remaining count text
         selected_prize_name = selected_prize_str.split(" (剩餘")[0]
-        target_count = int(edited_prizes[edited_prizes["獎項名稱"] == selected_prize_name]["數量"].iloc[0])
+        
+        # Recalculate remaining count to prevent index out of bounds
+        target_count = int(float(edited_prizes[edited_prizes["獎項名稱"] == selected_prize_name]["數量"].iloc[0]))
         current_drawn = len(st.session_state.winners_record[selected_prize_name])
-        remain_count = target_count - current_drawn
+        remain_count = max(0, target_count - current_drawn) # Ensure remain_count is never negative
 
         num_to_draw = remain_count if draw_mode == "一次抽出剩餘名額" else 1
 
@@ -123,12 +146,18 @@ def render_draw_section():
             if st.button("🎯 抽出得獎者", disabled=st.session_state.locked, use_container_width=True):
                 if len(st.session_state.participants) < num_to_draw:
                     st.error("剩餘人數不足以抽出此數量！請確認名單。")
+                elif num_to_draw <= 0:
+                    st.warning("此獎項已抽滿！")
                 else:
+                    # Randomly select winners without replacement
                     winners = random.sample(st.session_state.participants, num_to_draw)
                     st.session_state.latest_winners = winners
                     st.session_state.winners_record[selected_prize_name].extend(winners)
+                    
+                    # Remove winners from the participant pool
                     for w in winners:
                         st.session_state.participants.remove(w)
+                    
                     st.session_state.locked = True
                     st.rerun()
 
@@ -146,7 +175,7 @@ def render_draw_section():
     st.divider()
 
 # ==========================================
-# 5. 總得獎名單與操作模組
+# 5. Winners List and Operations Module
 # ==========================================
 def render_winners_section():
     st.subheader("4. 🏆 目前得獎總名單")
@@ -166,7 +195,7 @@ def render_winners_section():
         st.write("")
         col_dl, col_reset = st.columns(2)
         
-        # 製作 Excel 下載按鈕
+        # Export to Excel functionality
         with col_dl:
             df_export = pd.DataFrame(export_data)
             output = io.BytesIO()
@@ -181,23 +210,35 @@ def render_winners_section():
                 use_container_width=True
             )
             
-        # 製作退回獎池按鈕
+        # Reset pool functionality with confirmation UI
         with col_reset:
             if st.button("🔄 將所有得獎者退回獎池 (重新抽獎)", use_container_width=True):
-                # 把所有人加回池子裡並去重
+                st.session_state.confirm_reset = True
+                
+        # Show confirmation warning and buttons if the state is triggered
+        if st.session_state.confirm_reset:
+            st.warning("⚠️ 確定要將所有人退回獎池並清空目前的得獎紀錄嗎？這項操作無法復原。")
+            col_y, col_n = st.columns(2)
+            if col_y.button("✔️ 確定執行", type="primary", use_container_width=True):
+                # Add all past winners back to the pool and drop duplicates
                 all_past_winners = [w for winners in st.session_state.winners_record.values() for w in winners]
                 st.session_state.participants.extend(all_past_winners)
                 st.session_state.participants = list(set(st.session_state.participants))
                 
-                # 清空紀錄與解鎖
+                # Clear all records and reset states
                 for p in st.session_state.winners_record:
                     st.session_state.winners_record[p] = []
                 st.session_state.latest_winners = []
                 st.session_state.locked = False
+                st.session_state.confirm_reset = False
+                st.rerun()
+                
+            if col_n.button("❌ 取消", use_container_width=True):
+                st.session_state.confirm_reset = False
                 st.rerun()
 
 # ==========================================
-# 6. 側邊欄模組
+# 6. Sidebar Module
 # ==========================================
 def render_sidebar():
     with st.sidebar:
@@ -216,10 +257,11 @@ def render_sidebar():
             st.session_state.winners_record = {} 
             st.session_state.latest_winners = []
             st.session_state.locked = False
+            st.session_state.confirm_reset = False # Also clear confirmation state
             st.rerun()
 
 # ==========================================
-# 🚀 應用程式主進入點
+# 🚀 Main Application Entry Point
 # ==========================================
 def main():
     st.set_page_config(page_title="抽獎系統", page_icon="🎉", layout="wide")
@@ -227,11 +269,11 @@ def main():
     
     st.title("🎉 抽獎系統")
     
+    # Render sections sequentially
     render_import_section()
     render_prize_section()
     render_draw_section()
     render_winners_section()
     render_sidebar()
 
-if __name__ == "__main__":
-    main()
+main()

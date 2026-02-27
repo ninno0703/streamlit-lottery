@@ -17,6 +17,9 @@ def init_session_state():
         st.session_state.confirm_reset = False
     if "enable_animation" not in st.session_state:
         st.session_state.enable_animation = True
+    # 新增一個狀態，用來控制是否要顯示「全螢幕發表畫面」
+    if "show_result_screen" not in st.session_state:
+        st.session_state.show_result_screen = False
     if "prize_list" not in st.session_state:
         st.session_state.prize_list = pd.DataFrame([
             {"獎項名稱": "特獎", "數量": 1},
@@ -86,7 +89,7 @@ def render_prize_section():
     st.divider()
 
 # ==========================================
-# 4. Core Draw Module (Unlocked Version)
+# 4. Core Draw Module
 # ==========================================
 def render_draw_section():
     st.subheader("3. 進行抽獎")
@@ -141,7 +144,7 @@ def render_draw_section():
                 if len(st.session_state.participants) < total_needed:
                     st.error(f"池內人數不足！需要 {total_needed} 人，目前僅剩 {len(st.session_state.participants)} 人。")
                 elif total_needed > 0:
-                    # Execute Draw
+                    # 執行抽獎邏輯
                     st.session_state.latest_winners = {}
                     for p_name, qty in draw_plan.items():
                         if qty > 0:
@@ -151,17 +154,10 @@ def render_draw_section():
                             for w in winners:
                                 st.session_state.participants.remove(w)
                     
-                    # Trigger Animation immediately after logic
-                    if st.session_state.enable_animation:
-                        st.balloons()
+                    # 觸發全螢幕顯示狀態
+                    st.session_state.show_result_screen = True
                     st.rerun()
 
-            # Result Display (Always shows the result of the last click)
-            if st.session_state.latest_winners:
-                st.success("🎊 恭喜得獎者！")
-                for p_name, winners in st.session_state.latest_winners.items():
-                    with st.expander(f"🏆 {p_name} 得獎名單 ({len(winners)} 名)", expanded=True):
-                        st.write("、".join(winners))
         else:
             st.info("👆 請先選擇獎項。")
     st.divider()
@@ -229,15 +225,51 @@ def render_sidebar():
             st.session_state.confirm_reset = False 
             st.rerun()
 
+# ==========================================
+# 7. Full-Screen Result Module (全新！全螢幕發表模組)
+# ==========================================
+def render_full_screen_result():
+    # 這裡直接觸發動畫，因為沒有緊接著 rerun，所以動畫一定會噴發
+    if st.session_state.enable_animation:
+        st.balloons()
+        
+    st.markdown("<h1 style='text-align: center; font-size: 3.5rem; margin-top: 2rem;'>🎉 恭喜得獎 🎉</h1>", unsafe_allow_html=True)
+    st.write("---")
+    
+    # 置中顯示每一項獎品與得獎者
+    for p_name, winners in st.session_state.latest_winners.items():
+        if winners:
+            st.markdown(f"<h2 style='text-align: center; color: #FF4B4B;'>🏆 {p_name}</h2>", unsafe_allow_html=True)
+            winners_str = " 、 ".join(winners)
+            st.markdown(f"<h3 style='text-align: center; font-weight: normal;'>{winners_str}</h3>", unsafe_allow_html=True)
+            st.write("<br>", unsafe_allow_html=True) # 增加一些留白
+
+    st.write("---")
+    
+    # 製作一個大按鈕用來返回
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("🔙 返回抽獎系統並繼續", type="primary", use_container_width=True):
+            st.session_state.show_result_screen = False
+            st.rerun()
+
+# ==========================================
+# 🚀 Main Application Entry Point
+# ==========================================
 def main():
     st.set_page_config(page_title="抽獎系統", page_icon="🎉", layout="wide")
     init_session_state()
-    st.title("🎉 抽獎系統")
-    render_import_section()
-    render_prize_section()
-    render_draw_section()
-    render_winners_section()
-    render_sidebar()
+    
+    # 根據狀態決定要渲染「主畫面」還是「全螢幕結果畫面」
+    if st.session_state.show_result_screen:
+        render_full_screen_result()
+    else:
+        st.title("🎉 抽獎系統")
+        render_import_section()
+        render_prize_section()
+        render_draw_section()
+        render_winners_section()
+        render_sidebar()
 
 if __name__ == "__main__":
     main()
